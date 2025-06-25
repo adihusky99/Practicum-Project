@@ -1,0 +1,736 @@
+---
+title: "Practicum2"
+author: "Anish Raju Ramakrishna Amara & Aditya Elayavalli"
+date: "2023-11-08"
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Note: Before we start of with going through this assignment. We want to let those reading that each code chunk was created and worked on by both Aditya and Anish, the two authors of this code. Each code was worked on with the other present. 
+
+# Question 1
+
+### Data Preperation
+
+The data set we are going to obtain is from https://archive.ics.uci.edu/dataset/2/adult. The Datasets were downloaded as a kaggle file and the file paths were used. Please note to change the file path when running the code on your computer. 
+
+```{r loadData, echo=TRUE}
+
+library(readr)
+
+column_names <- c("age", "workclass", "fnlwgt", "education", "education_num",
+                     "marital_status", "occupation", "relationship", "race",
+                     "sex", "capital_gain", "capital_loss", "hours_per_week",
+                     "native_country", "income")
+# Read the adult data set with show_col_types set to FALSE
+adult_data <- read.csv("/Users/anishamara/Desktop/DA5030/Practicum2/adult/adult.data", 
+                       stringsAsFactors = TRUE,header = F)
+
+# Read the adult test data set with show_col_types set to FALSE
+adult_test <- read.csv("/Users/anishamara/Desktop/DA5030/Practicum2/adult/adult.test", 
+                       #col_names = column_names, 
+                       skip = 1,
+                       stringsAsFactor = TRUE,
+                       header = F)
+
+colnames(adult_data) <- column_names
+colnames(adult_test) <- column_names
+# Combine the two data sets into a single data frame
+combined_df <- rbind(adult_data, adult_test)
+combined_df$income <- as.factor(gsub("\\.", "", combined_df$income))
+# Display specific rows and the first four columns
+specified_rows <- combined_df[c(11, 112, 199, 203), 1:4]
+print(specified_rows)
+
+
+# Display specific rows and the first four columns
+head(combined_df[c(11, 112, 199, 203), 1:4])
+
+```
+We have loaded the dataset into R. As can be seen from the above data set, the rows 11, 112, 199 and 203 are showcased along with the first four columns. Now the below command will provide the first 10 rows of the data set. The R chunk below will take a random seed sample and afterwards we will distribute the sample with a 75:25 split, 75 is for training and 25 is for testing(validating) the models.
+```{r sampling,echo=TRUE}
+# Set the seed for reproducibility
+set.seed(33452)
+
+# Calculate the size of the training set (75% of the combined dataset)
+training_size <- round(nrow(combined_df) * 0.75)
+
+# Generate a random sample of row indices for the training set
+training_indices <- sample(nrow(combined_df), training_size,replace = F)
+
+# Create the training dataset
+training_df <- combined_df[training_indices, ]
+
+# Create the validation dataset
+validation_df <- combined_df[-training_indices, ]
+```
+
+#### Naive bayes Modeling
+The below code will run the Naive bayes model. In order to do so we have selected certain columns(aka "features") to help build a binary classifier that predicts whether an individual earns more than or less than US$50k. In order to do so we need to transform continuous variables into categorical variables by binning and eliminate any rows that contain missing values in any of the selected columns.
+```{r naive bayes modeling,echo=TRUE}
+# Load necessary libraries
+library(klaR)
+library(dplyr)
+
+# Selecting the relevant columns
+
+selected_columns <- c(1, 2, 5, 9, 10, 13, 14, 15)
+
+# Subsetting the dataframes to include only selected columns and removing NAs
+training_df_selected <- training_df[selected_columns] %>% na.omit()
+validation_df_selected <- validation_df[selected_columns] %>% na.omit()
+
+
+clean_data <- function(df) {
+  df[df == " ?"] <- NA
+  df[df == " "] <- NA
+  df[df == "?"] <- NA
+  df[df == "? "] <- NA
+  df <- na.omit(df)
+  return(df)
+}
+training_df_selected <- clean_data(training_df_selected)
+validation_df_selected <- clean_data(validation_df_selected)
+
+
+# Binning continuous variables (age, education_num, hours_per_week)
+
+for (col in names(training_df_selected[, sapply(training_df_selected, is.numeric)])) {
+  training_df_selected[, col] <- cut(training_df_selected[[col]], breaks = 3)
+}
+
+#transform continuous variables in validation data into categorical variables by binning
+for (cl in names(validation_df_selected[, sapply(validation_df_selected, is.numeric)])) {
+  validation_df_selected[, cl] <- cut(validation_df_selected[[cl]], breaks = 3)
+}
+
+
+columns_to_convert <- c("workclass", "race", "sex", "native_country")
+
+# Convert the specified columns to factors in the training data
+for (col in columns_to_convert) {
+  training_df_selected[[col]] <- as.factor(training_df_selected[[col]])
+}
+# Convert the specified columns to factors in the test data
+for (col in columns_to_convert) {
+  validation_df_selected[[col]] <- as.factor(validation_df_selected[[col]])
+}
+
+training_df_selected$income <- as.factor(training_df_selected$income)
+# Building the Naive Bayes model
+nb_model <- NaiveBayes(income~age+workclass+education_num+race+sex+hours_per_week+native_country, data=training_df_selected,laplace = TRUE)
+
+# Making predictions on the validation set without showing warnings
+predictions <- suppressWarnings(predict(nb_model, newdata = validation_df_selected))
+
+```
+
+
+The below code chunk produces the confusion matrix as well as the matrix in the form of a crosstable 
+```{r confustion matrix,echo=TRUE}
+library(gmodels)
+# Creating the confusion matrix
+the_matrix_is_real <- table(predictions$class, validation_df_selected$income)
+the_matrix_is_real
+
+d <- CrossTable(the_matrix_is_real,
+    prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+d
+```
+
+-$prop.row: Gives the proportion of each prediction within each predicted class.
+-$prop.col: Gives the proportion of actual classes within each prediction
+-$prop.tbl: Gives the overall proportion of each prediction in the total dataset.
+
+```{r calculation for accuracy and precision,echo=TRUE}
+true_negative <- the_matrix_is_real[1, 1]  # Correctly predicted No
+true_positive <- the_matrix_is_real[2, 2]  # Correctly predicted Yes
+false_positive <- the_matrix_is_real[1, 2] # Incorrectly predicted Yes
+false_negative <- the_matrix_is_real[2, 1] # Incorrectly predicted No
+```
+
+The provided above output represents a confusion matrix for a classification model, along with some additional statistics. Here's a breakdown of what each part means:
+
+Confusion Matrix:
+-True Negatives (TN): The model correctly predicted " <=50K" `r round(true_negative)`.
+-False Positives (FP): The model incorrectly predicted " >50K" `r round(false_positive)` times when the actual class was " <=50K".
+-False Negatives (FN): The model incorrectly predicted " <=50K" `r round(false_negative)` times when the actual class was " >50K".
+-True Positives (TP): The model correctly predicted " >50K" `r round(true_positive)` times.
+
+```{r accuracy and precision of model,echo=FALSE}
+accuracy <- (true_positive + true_negative) / (true_negative+true_positive+false_positive+false_negative)
+#accuracy
+
+precision_NB<-round(d$t[1]/ sum(d$t[3],d$t[1]),3)
+#precision_NB
+
+recall <- true_negative / (true_negative+true_positive+false_positive+false_negative)
+f1_precision_NB <- 2 * (precision_NB * recall) / (precision_NB + recall)
+cat("F1 score for Logistic Regression model:", round(f1_precision_NB * 100, 2), "%\n")
+```
+The accuracy of the model was `r round(accuracy,3)` and the precision was `r round(precision_NB,3)`. This indicates that the model accurately predicts `r round(accuracy * 100, 3)`% correctly with a precision of `r round(precision_NB * 100, 3)`%. 
+
+#### Logistic regression model
+
+Now we will create a Logistic regression model.
+
+```{r logistic model,echo=FALSE}
+# Load necessary libraries
+library(klaR)
+library(dplyr)
+
+colnames(training_df_selected)
+colnames(validation_df_selected)
+
+
+```
+
+The below code chunk runs the model 
+```{r,echo=FALSE}
+getMode <- function(v) {
+    uniqv <- unique(v)
+    uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+training_df_selected <- training_df_selected[!(training_df_selected$native_country == " ?" | training_df_selected$workclass == " ?"), ]
+
+mode_age <- getMode(training_df_selected$age)
+
+dummy_row <- training_df_selected[1, ]  # Copy the first row as a template
+dummy_row$age <- getMode(training_df_selected$age)
+dummy_row$workclass <- getMode(training_df_selected$workclass)
+dummy_row$education_num <- getMode(training_df_selected$education_num)
+dummy_row$race <- getMode(training_df_selected$race)
+dummy_row$sex <- getMode(training_df_selected$sex)
+dummy_row$hours_per_week <- getMode(training_df_selected$hours_per_week)
+dummy_row$native_country <- " Holand-Netherlands"
+dummy_row$income <- getMode(training_df_selected$income)
+
+
+training_df_selected <- rbind(training_df_selected, dummy_row)
+
+
+```
+
+```{r}
+logistic_model <- glm(income ~ ., data = training_df_selected, family = binomial)
+predictions_prob <- predict(logistic_model, newdata = validation_df_selected, type = "response")
+```
+
+```{r}
+# Creating the confusion matrix
+# Convert probabilities to binary predictions using a threshold of 0.5
+binary_predictions <- ifelse(predictions_prob > 0.5, 1, 0)
+
+
+# Now create the confusion matrix
+the_matrixis_real <- table(Predicted = binary_predictions, Actual = validation_df_selected$income)
+
+# Print the confusion matrix
+the_matrixis_real
+
+d2 <- CrossTable(the_matrixis_real,
+    prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+d2
+```
+
+```{r}
+true_negative2 <- the_matrixis_real[1, 1]  # Correctly predicted No
+true_positive2 <- the_matrixis_real[2, 2]  # Correctly predicted Yes
+false_positive2 <- the_matrixis_real[1, 2] # Incorrectly predicted Yes
+false_negative2 <- the_matrixis_real[2, 1] # Incorrectly predicted No
+
+accuracy2 <- (true_positive + true_negative) / (true_negative+true_positive+false_positive+false_negative)
+
+precision_NB2<-round(d2$t[1]/ sum(d2$t[3],d2$t[1]),3)
+recall2 <- true_negative2 / (true_negative2+true_positive2+false_positive2+false_negative2)
+f1_precision_NB2 <- 2 * (precision_NB2 * recall2) / (precision_NB2 + recall2)
+cat("F1 score for Logistic Regression model:", round(f1_precision_NB2 * 100, 2), "%\n")
+```
+The provided above output represents a confusion matrix for a classification model, along with some additional statistics. Here's a breakdown of what each part means:
+
+Confusion Matrix:
+-True Negatives (TN): The model correctly predicted " <=50K" `r round(true_negative2)`.
+-False Positives (FP): The model incorrectly predicted " >50K" `r round(false_positive2)` times when the actual class was " <=50K".
+-False Negatives (FN): The model incorrectly predicted " <=50K" `r round(false_negative2)` times when the actual class was " >50K".
+-True Positives (TP): The model correctly predicted " >50K" `r round(true_positive2)` times.
+
+
+According to the above matrix result, the model was had an accuracy of `r round(accuracy2, 3)` or `r round(accuracy2 * 100, 3)`% and a precision of `r round(precision_NB2, 3)` or `r round(precision_NB2, 3)`%
+
+#### Decision Tree
+
+The below code will aid in building a Decision Tree model that predicts whether an individual earns more than or less than US$50k
+
+
+
+```{r}
+
+
+library(rpart)
+
+decision_tree_model <- rpart(income ~ ., data = training_df_selected, method = "class")
+
+# Make predictions on the validation set
+tree_predictions <- predict(decision_tree_model, newdata = validation_df_selected, type = "class")
+
+# Create a confusion matrix to evaluate the model
+confusion_matrix_tree <- table(Predicted = tree_predictions, Actual = validation_df_selected$income)
+
+# Print the confusion matrix
+confusion_matrix_tree
+```
+
+```{r}
+d3 <- CrossTable(confusion_matrix_tree,
+    prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+d3
+```
+
+
+
+```{r}
+true_negative3 <- confusion_matrix_tree[1, 1]  # Correctly predicted No
+true_positive3 <- confusion_matrix_tree[2, 2]  # Correctly predicted Yes
+false_positive3 <- confusion_matrix_tree[1, 2] # Incorrectly predicted Yes
+false_negative3 <- confusion_matrix_tree[2, 1] # Incorrectly predicted No
+
+accuracy3 <- (true_positive3 + true_negative3) / (true_negative3+true_positive3+false_positive3+false_negative3)
+
+precision_NB3<-round(d3$t[1]/ sum(d3$t[3],d3$t[1]),3)
+
+recall3 <- true_negative3 / (true_negative3+true_positive3+false_positive3+false_negative3)
+f1_dec <- 2 * (precision_NB3 * recall3) / (precision_NB3 + recall3)
+cat("F1 score for Decision tree model:", round(f1_dec * 100, 2), "%\n")
+```
+The provided above output represents a confusion matrix for a classification model, along with some additional statistics. Here's a breakdown of what each part means:
+
+Confusion Matrix:
+-True Negatives (TN): The model correctly predicted " <=50K" `r round(true_negative3)`.
+-False Positives (FP): The model incorrectly predicted " >50K" `r round(false_positive3)` times when the actual class was " <=50K".
+-False Negatives (FN): The model incorrectly predicted " <=50K" `r round(false_negative3)` times when the actual class was " >50K".
+-True Positives (TP): The model correctly predicted " >50K" `r round(true_positive3)` times.
+
+
+
+According to the above matrix result, the model was had an accuracy of `r round(accuracy3, 3)` or `r round(accuracy3 * 100, 3)`% and a precision of `r round(precision_NB3, 3)` or `r round(precision_NB3, 3)`%
+
+
+
+```{r}
+decision_tree_model
+```
+The above code produces the nodes and terminal nodes used for the decision tree. The code below will produce a plot for the decision tree
+```{r}
+library(rpart.plot)
+rpart.plot(decision_tree_model, digits = 3)
+```
+
+```{r}
+rpart.plot(decision_tree_model, digits = 3, fallen.leaves = TRUE,
+               type = 3, extra = 101)
+```
+
+```{r,echo=FALSE}
+str(training_df_selected$age)
+str(training_df_selected$education_num)
+str(training_df_selected$hours_per_week)
+
+levels(training_df_selected$workclass)
+```
+
+### Predicting
+The below code junk will help is predict an individuals income via a function we built predictEarningsClass(). 
+```{r}
+predictEarningsClass <- function(data) {
+    # Assuming logistic_model, decision_tree_model, nb_model are already trained and available
+    
+    # Predict using logistic regression
+    predictions_prob <- predict(logistic_model, newdata = data, type = "response")
+
+    # Predict using decision tree
+    tree_predictions <- predict(decision_tree_model, newdata = data, type = "class")
+
+    # Predict using Naive Bayes
+    predictions_nb <- suppressWarnings(predict(nb_model, newdata = data, type = "class")$class)
+
+    # Combine individual predictions
+    combined_predictions <- cbind(as.numeric(predictions_prob > 0.5), as.numeric(tree_predictions), as.numeric(predictions_nb))
+
+    # Ensemble prediction using majority voting
+    ensembl_pred <- apply(combined_predictions, 1, function(row) {
+        ifelse(sum(row) >= 2, 1, 0)
+    })
+
+    return(ensembl_pred)
+}
+
+
+# Prepare the individual data for prediction
+individual_data <- data.frame(
+  age = 38,
+  workclass = " Private",
+  education_num = 13,
+  race = " Black",
+  sex = " Female",
+  hours_per_week = 40,
+  native_country = " Peru",
+  income = NA
+)
+
+
+
+#individual_data$age <- as.integer(factor(training_df_selected2$age))
+#individual_data$workclass <- as.integer(factor(training_df_selected2$workclass))
+
+#individual_data
+#head(training_df_selected,10)
+
+# Binning age, education_num, and hours_per_week
+
+individual_data$age <- cut(individual_data$age, breaks = c(16.9, 41.3, 65.7, 90.1), labels = c("(16.9,41.3]", "(41.3,65.7]", "(65.7,90.1]"), include.lowest = TRUE)
+
+
+individual_data$education_num <- cut(individual_data$education_num, breaks = c(0.985, 6, 11, 16), labels = c("(0.985,6]", "(6,11]", "(11,16]"), include.lowest = TRUE)
+
+individual_data$hours_per_week <- cut(individual_data$hours_per_week, breaks = c(0.902, 33.7, 66.3, 99.1), labels = c("(0.902,33.7]", "(33.7,66.3]", "(66.3,99.1]"), include.lowest = TRUE)
+
+
+# List of column names to convert to factors for new data 
+columns_to_convert <- c("age", "education_num", "hours_per_week", "workclass", "race", "sex","native_country", "income")
+
+
+# Convert the specified columns to factors in the test data
+for (col in columns_to_convert) {
+  individual_data[[col]] <- as.factor(individual_data[[col]])
+}
+
+head(training_df_selected,10)
+#individual_data
+# Predict income class using the ensemble model
+individual_prediction <- predictEarningsClass(individual_data)
+#cat("Predicted income class:", ifelse(individual_prediction == 1, ">50K", "<=50K"), "\n")
+
+```
+According to the above code  a 38-year-old black female adult who is privately employed, has 13 years of education, and who immigrated from Peru earns `r ifelse(individual_prediction == 1, ">50K", "<=50K")`
+
+### Model ensemble accuracy
+
+The below code chunk will evaluate the F1-Score for the ensemble 
+
+```{r}
+
+# Predict income class using the ensemble model
+final_predictions <- predictEarningsClass(individual_data)
+cat("Predicted income class:", ifelse(final_predictions == 1, ">50K", "<=50K"), "\n")
+
+
+validation_df_prediction <- predictEarningsClass(validation_df_selected)
+# Create a confusion matrix
+confusion_matrix2 <- table(Predicted = validation_df_prediction, Actual = validation_df_selected$income)
+print(confusion_matrix2)
+
+# Calculate accuracy
+accuracy4 <- sum(diag(confusion_matrix2)) / sum(confusion_matrix2)
+
+# Calculate precision
+precise <- confusion_matrix2[1,1] / sum(confusion_matrix2[1,])
+
+# Calculating recall for ensemble model 
+ensemblerecall <- confusion_matrix2[1,1] / sum(confusion_matrix2[, 1 ])
+
+# Calculating F1 score for ensemble 
+ensemble_f1_score <- 2 *(precise * ensemblerecall) / (precise + ensemblerecall)
+```
+F1 score that is produced from the Ensemble model is `r round(ensemble_f1_score * 100, 2)`
+
+### Best Model
+The following chunk of code helps us predict the best model. 
+```{r}
+# Calculate the F1-Score for the ensemble from (11) using the validation data. How does its performance compare to the individual models (Bayes, DT, and Log Regression)?
+
+f1 <- c(
+  ensemble = ensemble_f1_score,
+  NaiveBayes = f1_precision_NB,
+  DecisionTree = f1_dec,
+  LogisticRegression = f1_precision_NB2
+)
+best_model <-which.max(f1)
+
+the_end_is_near <- names(f1)[best_model]
+the_end_is_near
+score <- f1[best_model]
+# Print the F1-Scores and compare the models
+cat("F1-Scores:\n")
+cat(paste(names(f1), ": ", round(f1, 4), "\n"))
+
+cat("Best Model: ", the_end_is_near, " (F1-Score: ", round(f1[the_end_is_near], 4),")")
+
+```
+The best scoring model is `r the_end_is_near` with an F1-Score of `r round(score, 4)`. Higher the F1 score, the greater the accuracy and thus we should use this model to predict.
+
+# Problem 2
+
+### Reading the data and identification of Outliers
+
+Identify the outliers and the load the data to understand the dataset.
+```{r}
+energy.df <- read.csv(file = "/Users/anishamara/Desktop/DA5030/Practicum2/large-scale+wave+energy+farm/WEC_Perth_49.csv",
+                      header = TRUE, stringsAsFactors = FALSE)
+
+ots <- function(cols){
+  col_m <- mean(cols)
+  col_sd <- sd(cols)
+  z_score <- (cols - col_m) / col_sd
+  return(z_score)
+}
+
+energy.no.df <- energy.df
+
+# Get the column names from energy.df
+columns <- colnames(energy.df)
+outliers <- numeric(0)
+
+for (col in columns) {
+  column_data <- as.numeric(energy.df[[col]])
+  z_score <- ots(column_data)
+  
+  # Identify rows with outliers
+  outlier_indices <- which(abs(z_score) > 3)
+  # Print out the outliers if there are any outliers in the column
+  if (length(outlier_indices) > 0 ){
+    print((paste0("The outliers in the column, ", col," which are at positions ",paste(outlier_indices,collapse = " , "))))
+  }
+  # Concatenate the outliers
+  outliers <- c(outliers,outlier_indices)
+}
+
+# Get a unique list of outliers
+outliers <- unique(outliers)
+# Remove the indices present in outliers
+energy.no.df <- energy.no.df[-outliers,]
+```
+
+### Random sampling and testing for if the columns follow a normal distribution
+```{r}
+# Take a sample of 5000 rows to create a smaller dataset and check the normality distribution on that
+samp_subset <- energy.no.df[sample(nrow(energy.no.df),5000,replace = FALSE),]
+cols <- colnames(samp_subset)
+
+# Apply the shapiro-wilk test on every column
+for (col in cols){
+  shap <- shapiro.test(samp_subset[,col])
+  a <- shap$p.value
+  if (a > 0.05){
+    print(paste0("The column ",col," does not follow a normal distribution"))
+  } 
+}
+```
+
+From the shapiro-wilk test all the p-values are statistically significant which means that we reject the null hypothesis that the dataset follows a normal distribution. In other words, the dataset does not follow a normal distribution.
+
+### Performing various transforms to see if the data follows a normal distribution
+
+
+#### Log Transform
+
+We perform the log transformation on the datasets and thus check if the columns follow a normal distribution.
+
+```{r}
+
+cols <- colnames(energy.no.df)
+# Apply log transform to every dataframe
+energy.tx1 <- as.data.frame(lapply(energy.no.df, log))
+
+# Check if the values follow a normal distribution
+samp_subset1 <- energy.tx1[sample(nrow(energy.no.df),5000,replace = FALSE),]
+cols <- colnames(samp_subset1)
+
+# Apply shapiro-wilk to every column
+for (col in cols) {
+  shap <- shapiro.test(samp_subset1[, col])
+  a <- shap$p.value
+  if (!is.na(a) && !is.nan(a) && a > 0.05) {
+    print(paste0("The column ", col, " follows normal distribution"))
+  }
+}
+```
+
+We can conclude that there are no columns that follow a normal distribution after performing a log transform
+
+#### Square root Transform
+
+We perform the square-root transformation on the datasets and thus check if the columns follow a normal distribution.
+
+```{r}
+
+cols <- colnames(energy.no.df)
+
+# Apply square root transform to every dataframe
+energy.tx2 <- as.data.frame(lapply(energy.no.df, sqrt))
+
+# Check if the values follow a normal distribution
+samp_subset2 <- energy.tx2[sample(nrow(energy.no.df),5000,replace = FALSE),]
+cols <- colnames(samp_subset2)
+
+# Apply shapiro-wilk to every column
+for (col in cols) {
+  shap <- shapiro.test(samp_subset2[, col])
+  #print(shap)
+  a <- shap$p.value
+  if (!is.na(a) && !is.nan(a) && a > 0.05) {
+    print(paste0("The column ", col, " follows normal distribution"))
+  }
+}
+```
+
+We can say that there are no columns that follow a normal distribution after performing a square root transform on the data.
+
+
+#### Inverse transformation
+
+We perform the inverse transformation on the datasets and thus check if the columns follow a normal distribution.
+
+```{r}
+cols <- colnames(energy.no.df)
+# Apply inverse transform to every dataframe
+energy.tx3 <- as.data.frame(lapply(energy.no.df, function(x) 1/x))
+
+# Check if the values follow a normal distribution
+samp_subset3 <- energy.tx3[sample(nrow(energy.no.df),5000,replace = FALSE),]
+cols <- colnames(samp_subset2)
+
+# Apply shapiro-wilk to every column
+for (col in cols) {
+  shap <- shapiro.test(samp_subset3[, col])
+  a <- shap$p.value
+  if (!is.na(a) && !is.nan(a) && a > 0.05) {
+    print(paste0("The column ", col, " follows normal distribution"))
+  }
+}
+```
+
+We can say that there are no columns that follow a normal distribution after performing a inverse transform on the data.
+
+### Correlation to the response variable
+
+Correlation with each variable was given to understand how each variable is related to the target variable and in this case the Total_Power. It prints out the variables that have a strong positive or negative correlation.
+```{r}
+# Check for the correlation of Total Power with each column and print it out if the correlation is greater than 0.6
+for (col in cols){
+  corelation <- cor.test(energy.no.df$Total_Power,energy.no.df[,col])
+  if (abs(corelation$estimate) > 0.6 && col != "Total_Power"){
+    print(paste0("The column ",col," has a correlation estimate of ",abs(corelation$estimate)))
+    
+  }
+}
+```
+
+### Splitting the datasets and building multiple regression models on Energy.df and Energy.no.df
+
+The dataset was split using the caret package into 70% training and 30% validation data and thus generating different training and testing datasets.
+
+```{r}
+library(caret)
+set.seed(1324)
+
+# Split the dataset into 70% training and 30% testing for both the datasets with outliers and without outliers
+samp1 <- createDataPartition(energy.df$Total_Power,p=0.7, list = FALSE, times =1)
+energy.df.training <- energy.df[samp1,]
+energy.df.testing <- energy.df[-samp1,]
+
+
+set.seed(1324)
+samp2 <- createDataPartition(energy.no.df$Total_Power,p=0.7, list = FALSE, times =1)
+energy.no.df.training <- energy.no.df[samp2,]
+energy.no.df.testing <- energy.no.df[-samp2,]
+
+
+
+
+```
+
+### Backward Elimination
+
+```{r warning=FALSE}
+# Automating the backward elimination process using loops
+backward_elimination <- function(dataset, target, significance = 0.05) {
+  
+  # Generate the initial model
+  initial_model <- lm(target ~ ., data = dataset)
+  # Get the max p_value
+  max_p <- max(summary(initial_model)$coefficients[, 4])
+  # When the max p_value is greater than significance go on eliminating the columns one by one
+  while (max_p > significance) {
+    max_p_index <- which.max(summary(initial_model)$coefficients[, 4])
+    rem <- names(max_p_index)
+    dataset <- dataset[, -which(names(dataset) %in% rem), drop = FALSE]
+    new_model <- lm(target ~ ., data = dataset)
+    max_p <- max(summary(new_model)$coefficients[, 4])
+    initial_model <- new_model
+  }
+  return(initial_model)
+}
+
+
+
+## Applying the elimination to all the data frames
+# 1. Applying to the model with no outliers
+processed_model <- backward_elimination(energy.no.df.training,energy.no.df.training$Total_Power)
+#summary(processed_model)
+
+# 2. Applying to the raw dataset
+raw_model <- backward_elimination(energy.df.training,energy.df.training$Total_Power)
+#summary(raw_model)
+
+```
+
+### Analysis
+
+#### Making the predictions of the total power using the respective models
+```{r, warning=FALSE}
+# Predict the values and calculate RMSE and adjusted R-squared value
+no_ots <- predict(processed_model,energy.no.df.testing[,-energy.no.df.testing$Total_Power])
+sqerr_1 <- (residuals(processed_model)^2)
+rmse_1 <- sqrt(mean(sqerr_1))
+r1 <- summary(processed_model)$adj.r.squared
+
+# Predict the values and calculate RMSE and adjusted R-squared value
+with_ots <- predict(raw_model,energy.df.testing[,-energy.df.testing$Total_Power])
+sqerr_2 <- (residuals(raw_model)^2)
+rmse_2 <- sqrt(mean(sqerr_2))
+r2 <- summary(raw_model)$adj.r.squared
+```
+
+From the analysis, we can see that both the models are very good because of the low RMSE. The model with the outliers has an RMSE of `r rmse_1` and the model without the outliers has a value of `r rmse_2`. Since the RMSEs are very close to 0, we can say that both the models are very good but the model without the outliers is better because it has a smaller RMSE value. The adjusted R-squared value for the the model with outliers is `r r2` and that for the model without the outliers `r r1`.
+
+This shows that the model can predict better when there is a good amount of data. If we have to compare the two models the one without the outliers has a slight edge over the one with the outliers. The adjusted R-squared value close to 1 means that the points are being predicted very close to the actual values with minor differences in decimal points which is mostly insignificant.
+
+We can also say that the model without the outliers is better because in general we remove whatever has a greater variance from the mean and this can be clearly seen in the values of adjusted R-squared and the RMSE values. The errors are also lower when the models have their outliers removed. Through this, we can conclude that the model which has no outliers is better than the raw dataset.
+
+### Calculating the confidence intervals
+
+The confidence intervals are same as the predicted values in this case because the standard residual error for the models is very small and the second term will be close to zero and this can be seen in the resulting columns as well.
+```{r}
+energy.df.testing$PredictedVals <- with_ots
+energy.no.df.testing$PredictedVals <- no_ots
+
+energy.no.df.testing$CI_Lower <- energy.no.df.testing$PredictedVals - 1.96*3.138e-12 
+energy.no.df.testing$CI_Upper <- energy.no.df.testing$PredictedVals + 1.96*3.138e-12 
+
+energy.df.testing$CI_Lower <- energy.df.testing$PredictedVals - 1.96*1.333e-11
+energy.df.testing$CI_Upper <- energy.df.testing$PredictedVals + 1.96*1.333e-11
+
+head(energy.df.testing[,149:152],5)
+head(energy.no.df.testing[,149:152],5)
+```
