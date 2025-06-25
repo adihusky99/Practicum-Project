@@ -1,2 +1,2 @@
 # Practicum-Project
-Practicum {rojects
+Practicum projects
