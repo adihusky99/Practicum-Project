@@ -1,0 +1,623 @@
+---
+title: "Practicum 1"
+author: "Aditya Elayavalli"
+date: "2023-10-03"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Question 1 
+```{r loadData, echo=F}
+url1 <- "https://s3.us-east-2.amazonaws.com/artificium.us/datasets/LifeExpectancyData.csv"
+df <- read.csv(file = url1, header = T, stringsAsFactors = T)
+#inspecting the data
+str(df)
+head(df,5)
+```
+### 1.1 / Analysis of Data Distribution
+
+```{r meanLifeExpectancy,echo=F}
+library(ggplot2)
+mean_life <- aggregate(df$LifeExpectancy, by = list(status = df$Status), FUN= function(x) mean(x, na.rm = TRUE))
+barplot(mean_life$x,
+        main = "average life expectancy for each country based on developing vs developed",
+        xlab = "Status",
+        ylab = "LifeExpectancy",
+        names.arg = c("Developed", "Developing"),
+        col = c("blue","green"),
+        horiz = FALSE)
+```
+From the graph, it's evident that developed countries have a higher average life expectancy at 79.19, compared to 67.11 for developing countries.
+
+```{r Significance}
+mean_life_w <- aggregate(df$LifeExpectancy,list(df$Country,df$Status),FUN = mean)
+colnames(mean_life_w) <- c("Country","Status","LifeExpectancy")
+developed <- mean_life_w$LifeExpectancy[which(mean_life_w$Status=="Developed")]
+developing <- mean_life_w$LifeExpectancy[which(mean_life_w$Status=="Developing")]
+a <- t.test(developed,developing)
+a
+```
+Based on the t-test results, the obtained p-value is `r a$p.value`. Given that this value is notably close to zero, we reject the null hypothesis which posited that there is no significant difference in the mean life expectancy between Developed and Developing countries. Since the p-value is less than the 0.05 threshold, we conclude that the difference in mean life expectancy between Developed and Developing countries is statistically significant
+
+
+```{r ShapiroWilk}
+df1 <- df[,4:20]
+shapiro <- shapiro.test(df1$LifeExpectancy)
+shapiro
+```
+Based on the Shapiro test, the obtained p-value is `r shapiro$p.value`. Given its value is less than 0.05 and near zero, we reject the null hypothesis of normality. Therefore, we can conclude that the data does not adhere to a normal distribution. 
+
+### 1.2 / Identification of Outliers
+
+```{r outliers}
+
+# Identify numeric columns
+numeric_cols <- sapply(df, is.numeric)
+
+# Initialize an empty list to store the row numbers of outliers for each column
+outliers_list <- list()
+
+# Loop through each numeric column and identify outliers
+for(col_name in names(df)[numeric_cols]) {
+  
+  m <- mean(df[[col_name]], na.rm = TRUE)
+  sd_col <- sd(df[[col_name]], na.rm = TRUE)
+  
+  z_scores <- abs((df[[col_name]] - m) / sd_col)
+  
+  outliers_list[[col_name]] <- which(z_scores > 3)
+}
+
+# Print the number of outliers and their rows for each numeric column
+for(col_name in names(outliers_list)) {
+  cat("\nColumn:", col_name, "\n")
+  cat("Number of outliers:", length(outliers_list[[col_name]]), "\n")
+  if(length(outliers_list[[col_name]]) > 0) {
+    cat("Outlier positions:", outliers_list[[col_name]], "\n")
+  } else {
+    cat("No outliers detected\n")
+  }
+}
+# Print the outliers' rows for each numeric column
+
+```
+
+
+The summary above lists the outliers within each column, along with their respective positions in the dataset. Outliers are data points that deviate significantly from other observations. Their presence can skew the analysis, potentially leading to erroneous predictions. It's crucial to address outliers correctly, either by normalization or removal, depending on the nature of the data.
+
+Several techniques exist to detect outliers, including:
+
+- **Standard Deviation**: Points more than three standard deviations from the mean are typically considered outliers.
+  
+- **Interquartile Range (IQR)**: In a box plot, any data point below \(Q1 - 1.5 \times IQR\) or above \(Q3 + 1.5 \times IQR\) is treated as an outlier, where \(Q1\) and \(Q3\) are the first and third quartiles, respectively.
+
+- **Z-score**: A popular method where each data point's z-score (a measure in terms of standard deviation) is calculated. Points with z-scores greater than 3 are usually tagged as outliers.
+
+- **DBSCAN Clustering**: This method forms clusters from core samples and marks non-core points as outliers.
+
+- **Isolation Forest**: It distinguishes outliers by randomly selecting a feature and a split value between the maximum and minimum values of the selected feature.
+
+For our analysis, we utilized the z-score technique to pinpoint outliers.
+
+The table above provides a detailed count of outliers present in each column.
+
+```{r}
+# checking to see if there is any NA
+anyNA(df)
+
+# Removing NAs from the life expectancy column in the data frame
+df_L <- df$LifeExpectancy[which(!is.na(df$LifeExpectancy))]
+```
+
+The life expectancy column has a maximum value of `r max(df_L)` and a minimum of `r min(df_L)`. Its standard deviation stands at `r round(sd(df_L),2)`.
+
+The median represents the central value in a dataset, splitting it into two halves. Specifically, when data is sorted in ascending or descending order, the median is the middle number. For the life expectancy column, the median is `r median(df_L)`.
+
+A trimmed mean offers an average by excluding a predetermined percentage of extreme values (outliers) from both the top and bottom ends of the data. For instance, if we choose a 10% trim level, it will eliminate the top and bottom 10% of data before calculating the mean. This approach mitigates the influence of outliers. 
+
+Considering the life expectancy column, calculating a trimmed mean may not be the most effective as there are only two outliers. However, for columns like Polio and Diphtheria, which have a more substantial number of outliers, the trimmed mean becomes more relevant. Different trim percentages can be experimented with across columns to gauge how much outliers impact the average. It's pivotal to strike a balance between obtaining a reliable estimate and ensuring the precision of any derived model.
+
+### 1.3 / Data Preparation
+
+```{r preperation}
+# Create a new dataset to ensure that all relevant numerical data is put in
+df_accurate <- df[, !(names(df) %in% c("Country", "Status", "Year"))]
+
+z_score_normalization <- function(col) {
+  if(is.numeric(col)) {
+    mean_col <- mean(col, na.rm = TRUE)
+    std_col <- sd(col, na.rm = TRUE)
+    return ((col - mean_col) / std_col)
+  } else {
+    return(col)
+  }
+}
+
+df_z_score_normalized <- as.data.frame(lapply(df_accurate, z_score_normalization))
+```
+In the provided code, we employ the equation $z = (x - average) / std deviation$ or each column. By doing so, we're standardizing the features to exhibit characteristics of a standard normal distribution. This step ensures that data across columns are presented uniformly, eliminating potential biases and establishing a consistent basis for comparison. The primary objective is to ensure that every feature has a proportional influence on predictions, enhancing the overall accuracy of the model.
+```{r normalization}
+df_z_score_normalized <- as.data.frame(df_z_score_normalized)
+df_z_score_normalized$Disease <- df_z_score_normalized$HepB + df_z_score_normalized$Measles + df_z_score_normalized$Polio + df_z_score_normalized$Diphtheria
+summary(df_z_score_normalized)
+```
+### 1.4 / Sampling Training and Validation Data
+```{r sampling}
+
+# Attach 'Status' to the normalized dataset
+df_z_score_normalized <- cbind(df_z_score_normalized, df$Status)
+colnames(df_z_score_normalized)[which(names(df_z_score_normalized) == "df$Status")] <- "Status"
+
+# Determine indices for 'Developing' and 'Developed' countries
+developing_countries <- which(df_z_score_normalized$Status == "Developing")
+developed_countries <- which(df_z_score_normalized$Status == "Developed")
+
+# Randomly select 15% from each country type
+set.seed(13846) # Ensure reproducibility
+developing_countries_sample <- sample(developing_countries, ceiling(0.15 * length(developing_countries)), replace = F)
+developed_countries_sample <- sample(developed_countries, ceiling(0.15 * length(developed_countries)), replace = F)
+
+# Combine indices to form the total sample
+total_samples <- c(developing_countries_sample, developed_countries_sample)
+
+# Create training and validation datasets
+df_val <- df_z_score_normalized[total_samples, ]
+df_train <- df_z_score_normalized[-total_samples, ]
+
+# Extract 'Status' labels from training and validation datasets
+df_val_labels <- df_val$Status
+df_train_labels <- df_train$Status
+
+# Drop the 'Status' column from both datasets
+df_val <- df_val[, -which(names(df_val) == "Status")]
+df_train <- df_train[, -which(names(df_train) == "Status")]
+```
+
+### 1.5 / Predictive Modeling
+
+
+
+```{r modeling}
+library(class)
+
+normalize <- function(data_point, training_data){
+  means <- colMeans(training_data, na.rm = TRUE)
+  std_devs <- apply(training_data, 2, sd, na.rm = TRUE)
+  
+  normalized_pt <- (data_point - means) / std_devs
+  
+  return(normalized_pt)
+}
+
+# Impute the median values to all columns for missing values in df_train
+for (i in colnames(df_train)){
+  miss <- is.na(df_train[,i])
+  if (any(miss)){
+    med <- median(df_train[,i], na.rm = TRUE)
+    df_train[,i][miss] <- med
+  }
+}
+
+
+# Create new data point
+new_pt <- data.frame(
+  LifeExpectancy = 66.4,
+  AdultMortality = 275,
+  NumInfantDeaths = 1,
+  Alcohol = 0.01,
+  PercentageExpenditure = 10,
+  HepB = 40,
+  Measles = 400,
+  BMI = 17,
+  Under5Deaths = 106,
+  Polio = 10,
+  TotalExpenditure = median(df_train$TotalExpenditure, na.rm = TRUE),
+  Diphtheria = 66,
+  HIV = median(df_train$HIV, na.rm = TRUE),
+  GDP = 620,
+  thinness1.19y = median(df_train$thinness1.19y, na.rm = TRUE),
+  thinness5.9y = median(df_train$thinness5.9y, na.rm = TRUE),
+  Schooling = median(df_train$Schooling, na.rm = TRUE)
+)
+
+# Sum of diseases
+new_pt$Disease <- new_pt$HepB + new_pt$Measles + new_pt$Polio + new_pt$Diphtheria
+
+# Ensure that the column structure and ordering match between new_pt and df_train
+new_pt <- new_pt[, colnames(df_train)]
+
+# Normalize new_pt
+normalized_pt <- normalize(new_pt, training_data = df_train)
+
+# Apply kNN
+model <- knn(train = df_train, test = normalized_pt, cl = df_train_labels, k = 5)
+
+```
+
+We initiated our process by standardizing each column using the z-score normalization technique. After this, the data was divided into a training set and a validation set. Using the kNN function from the `class` package, we predicted the category of a new data point. The prediction for this specific data point was determined as such.
+
+kNN, or k-Nearest Neighbors, is a machine learning algorithm predominantly utilized for classification tasks. This method gauges the distance between a new, unlabelled data point and its surrounding data points, basing its prediction on the majority classification of its neighbors. The initial step entails computing the distance between the new data point and every other data point in the training set. Once computed, these distances are organized in ascending order. 
+
+A predetermined number, denoted as 'k', defines how many nearest neighbors should be considered. In this instance, we've chosen k as 5, so the nearest 5 data points are evaluated. The final prediction is determined by the predominant classification among these neighbors.
+
+Upon concluding steps like data preprocessing and column normalization, we also standardized the new data point using the same method applied to the training set. Following these steps, our prediction categorized the provided country as `r model`.
+
+### 1.6 / Model Accuracy
+
+```{r accuracy}
+# Impute the data to median for validation dataset
+for (i in colnames(df_val)){
+  miss <- is.na(df_val[,i])
+  if (any(miss)){
+    med <- median(df_val[,i], na.rm = TRUE)
+    df_val[,i][miss] <- med
+  }
+}
+
+predictions <- data.frame(k = integer(), pred_labels = character())
+
+# Predict using kNN for each observation in validation set
+for (i in 1:nrow(df_val)){
+  unk <- df_val[i,]
+  
+  for (k in 2:10){
+    knn_output <- knn(train = df_train, test = unk, cl = df_train_labels, k = k)
+    predictions <- rbind(predictions, data.frame(k = k, pred_labels = knn_output))
+  }
+}
+
+# Calculate accuracies
+accuracies <- sapply(2:10, function(k) {
+  predicted_labels <- predictions[predictions$k == k,]$pred_labels
+  mean(predicted_labels == df_val_labels) * 100
+})
+
+print(accuracies)
+
+# Plotting accuracies
+plot(2:10, accuracies, type = "b", pch = 19, col = "blue", 
+     xlab = "k", ylab = "Accuracy (%)", 
+     main = "kNN Accuracy vs. k")
+```
+
+
+```{r,echo=FALSE,include=TRUE}
+# gives the best accuracy along with the k value
+max_accuracy <- max(accuracies)
+best_k <- which(accuracies == max_accuracy)[1] + 1  # since the k values start from 2
+
+```
+We visualized the outcomes of the k-Nearest Neighbors (kNN) method from the 'class' package to assess the model's precision. The graph depicts the relationship between different k values, spanning from 2 to 10, and their respective accuracy levels. Upon analyzing the graph, it became evident that the model's accuracy fluctuates with different k values. For our purposes, we aim to choose the k value that offers the best accuracy, balancing both bias and variance, depending on the specific dataset and its needs. Notably, the best accuracy was `r max_accuracy`% achieved when k= `r best_k`. It's vital to normalize new data, akin to the training data, to ensure meaningful distance calculations and enhance the precision of the model.
+
+
+# Question 2 
+This problem requires analysis of a data set about abalones-- a type of marine snail 
+We are going to use various measurement to estimate the shucked weight from other measurements, which are easier to obtain. To do that, we will build a predictive model using a regression kNN algorithm.
+
+The below code will give us the data frame along with inspecting the data
+```{r}
+url2 <- "https://s3.us-east-2.amazonaws.com/artificium.us/datasets/abalone.csv"
+df2 <- read.csv(url2,
+               header = T,
+               stringsAsFactors = F)
+
+str(df2)
+```
+further inspecting the data
+```{r}
+head(df2,4)
+tail(df2,4)
+```
+checking for any missing data 
+```{r}
+anyNA(df2)
+```
+Does not appear to be any missing data. The below code gives me the summary of the data frame
+```{r}
+summary(df2)
+```
+## 2.1 /  Predicting Shucked Weight of Abalones using Regression kNN
+```{r swa}
+# Save the values of the "Shucked Weight"" column in a separate vector called target_data
+target_data <- df2$ShuckedWeight 
+
+# Create a new dataset called train_data containing all the training features
+train_data <- df2[, !(names(df2) == "Shucked Weight")]
+```
+
+```{r eval=FALSE, echo=FALSE}
+#checking to make sure all the training features were added excluding shucked weight
+train_data
+```
+
+### 2.2 / Encoding
+
+```{r encode}
+sex <- as.factor(train_data$Sex)
+levels(sex)
+```
+
+One-Hot Encoding is an effective way to transform nominal categorical variables into a format that can be provided to machine learning algorithms to do a better job in prediction. This method creates binary columns for each category and indicates the presence of the categories with a 1 or 0. Since "Sex" is a nominal categorical variable (categories that don't have a natural order), one-hot encoding is suitable.
+```{r encoded}
+# initialize the columns First and Second to 0
+train_data$Male <- 0
+train_data$Female <- 0
+train_data$Intersex <- 0
+
+# set the columns to 1 if it's the corresponding class
+train_data$Male <- ifelse(train_data$Sex == "M", 1, 0)
+train_data$Female <- ifelse(train_data$Sex == "F", 1, 0)
+train_data$Intersex <- ifelse(train_data$Sex == "I", 1, 0)
+head(train_data[c(10,11,12)], 10)
+```
+
+### 2.3 / Min Max-Normalization
+```{r maxmin}
+# need to create a function for the Normalization
+# Define the normalization function
+normalization <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+
+# Function to apply normalization selectively to numeric columns and avoid the 'Sex' column
+normalize_cols_except_sex <- function(data) {
+  is_numeric <- sapply(data, is.numeric)
+  is_not_sex <- names(data) != "Sex"
+  
+  # Columns that are numeric and not 'Sex'
+  to_normalize <- is_numeric & is_not_sex
+  
+  data[to_normalize] <- lapply(data[to_normalize], normalization)
+  return(data)
+}
+
+# Apply the normalization
+train_data <- normalize_cols_except_sex(train_data)
+summary(train_data)
+```
+
+
+### 2.4 / KNN
+The below code will feature a function called "knn.reg" that implements a regression version of kNN. that averages the value of the "Shucked Weight" of the "k"nearest neighbors using a weighted average where the weight is 3 for the closest neighbor, 2 for the second closest, and 1 for the remaining neighbors
+
+```{r KNN}
+# Calculate euclidean distance
+euclidean_dist <- function(x, y) {
+    dist <- 0
+    for (i in 1:length(x)) {
+        dist <- dist + (x[i] - y[i])^2
+    }
+    dist <- sqrt(dist)
+    return(dist)
+}
+
+Neighbor_dist <- function(training_pts, unknown_pt) {
+    pts <- nrow(training_pts)
+    dist_2_pt <- numeric(pts)
+    for (i in 1:pts) {
+        training_pt <- training_pts[i,]
+        dist_2_u <- euclidean_dist(training_pt[,1], unknown_pt[,1])
+        dist_2_pt[i] <- dist_2_u
+    }
+    return(dist_2_pt)
+}
+
+Neighbor_select <- function(dists, k) {
+    arrange <- order(dists)
+    closest_pts <- arrange[1:k]
+    return(closest_pts)
+}
+
+wma <- function(w, closest_pts, target_data) {
+    wma_avg <- sum(w * target_data[closest_pts]) / sum(w)
+    return(wma_avg)
+}
+
+knn.reg <- function(new_data, target_data, train_data, k) {
+    distances <- Neighbor_dist(training_pts = train_data, unknown_pt = new_data)
+    closest_pts <- Neighbor_select(distances, k)
+    
+    # If more than one row in new_data, compute the weighted average for each row and then take the average of all.
+    if (nrow(new_data) > 1) {
+        all_predictions <- sapply(1:nrow(new_data), function(row_num) {
+            wma(w = c(3, 2, 1), closest_pts, target_data)  
+        })
+        return(mean(all_predictions))
+    } else {
+        weighted_avg <- wma(w = c(3, 2, 1), closest_pts, target_data)
+        return(weighted_avg)
+    }
+}
+
+n <- nrow(train_data)
+set.seed(876587)
+training_points <- sample(1:n, ceiling(0.8 * n), replace = F)
+training_dataset <- train_data[training_points,]
+training_labels <- target_data[training_points]  
+val_dataset <- train_data[-training_points,]
+val_labels <- target_data[-training_points]     
+
+# Test cases
+prediction_1 <- knn.reg(val_dataset[1,], training_labels, training_dataset, k=3)
+print(prediction_1)
+
+prediction_2 <- knn.reg(val_dataset, training_labels, training_dataset, k=3)
+print(prediction_2)
+
+
+
+```
+### 2.5 / Forecasting
+
+```{r forecasting}
+# Create new abalone data without the Sex column
+new_point <- data.frame(
+  Length = 0.34,
+  Diameter = 0.491,
+  Height = 0.245,
+  VisceraWeight = 0.0887,
+  ShellWeight = 0.19,
+  WholeWeight = 0.4853,
+  NumRings = 10
+)
+
+# Define columns to be normalized
+columns_to_normalize <- c("Length", "Diameter", "Height", "VisceraWeight", "ShellWeight", "WholeWeight", "NumRings")
+
+# Ensure the new_point and training_dataset columns are numeric for these columns
+new_point[columns_to_normalize] <- lapply(new_point[columns_to_normalize], as.numeric)
+training_dataset[columns_to_normalize] <- lapply(training_dataset[columns_to_normalize], as.numeric)
+
+# Normalize the data using min-max normalization
+min_vals_cols <- sapply(training_dataset[columns_to_normalize], min)
+max_vals_cols <- sapply(training_dataset[columns_to_normalize], max)
+
+normalize_data <- function(data_point, min_vals, max_vals) {
+  return(sweep(sweep(data_point, 2, min_vals, "-"), 2, max_vals - min_vals, "/"))
+}
+
+new_point_normalized <- normalize_data(new_point, min_vals_cols, max_vals_cols)
+
+# Ensure there are no NAs in the normalized data
+if (sum(is.na(new_point_normalized)) > 0) {
+  stop("There are NA values in the normalized data!")
+}
+
+# Apply the knn.reg function
+pred <- knn.reg(new_data = new_point_normalized, target_data = training_labels, train_data = training_dataset, k = 3)
+
+# Print the result
+print(paste("The predicted value for the given new point is:", round(pred, 4)))
+
+```
+
+
+### 2.6 / MSE
+```{r Mse}
+set.seed(677687)
+samp_size <- sample(nrow(df2), size = 0.15 * nrow(df2), replace = F)
+testing <- df2[samp_size,]
+training <- df2[-samp_size,]
+
+# One-hot encoding
+training$Male <- ifelse(training$Sex == "M", 1, 0)
+training$Female <- ifelse(training$Sex == "F", 1, 0)
+training$Intersex <- ifelse(training$Sex == "I", 1, 0)
+
+testing$Male <- ifelse(testing$Sex == "M", 1, 0)
+testing$Female <- ifelse(testing$Sex == "F", 1, 0)
+testing$Intersex <- ifelse(testing$Sex == "I", 1, 0)
+
+train_labels <- training$ShuckedWeight
+test_labels <- testing$ShuckedWeight
+
+# Drop the original 'Sex' and 'ShuckedWeight' columns
+training <- training[, !(names(training) %in% c("Sex", "ShuckedWeight"))]
+testing <- testing[, !(names(testing) %in% c("Sex", "ShuckedWeight"))]
+
+start <- Sys.time()
+predictions <- knn.reg(new_data = testing, train_data = training, target_data = train_labels, k = 3)
+ends <- Sys.time()
+
+mse <- mean((test_labels - predictions)^2)
+
+print(paste("The mean squared error is, ", round(mse,4)))
+
+
+```
+
+# Question 3
+
+### 3 / Forecasting Future Sales Price
+```{r,echo=FALSE,include=TRUE}
+library(knitr)
+library(ggplot2)
+
+# Access and refine the dataset
+url <- "https://s3.us-east-2.amazonaws.com/artificium.us/datasets/property-sales.csv"
+property_sales <- as.data.frame(read.csv(file = url, header = TRUE, stringsAsFactors = FALSE))
+
+# Adjust 'datesold' column to a Date type
+property_sales$sale_date <- as.Date(property_sales$datesold, format = "%m/%d/%y")
+
+# Derive the year from 'sale_date' column
+property_sales$transaction_year <- as.numeric(format(property_sales$sale_date, "%Y"))
+
+# Pinpoint the earliest and latest year
+start_year <- min(property_sales$transaction_year)
+end_year <- max(property_sales$transaction_year)
+
+# Determine the central value of price
+median_price <- median(property_sales$price)
+
+# Calculate the mean price with 10% exclusion
+avg_trimmed <- round(mean(property_sales$price, trim = 0.10), 2)
+
+# Compute price fluctuation measure
+price_sd_val <- round(sd(property_sales$price), 2)
+
+# Ascertain annual median prices
+annual_median_prices <- aggregate(property_sales$price, list(Year = property_sales$transaction_year), median)
+names(annual_median_prices) <- c("Year", "AnnualMedian")
+
+# Deduce mean prices for each year, trimmed at 10%
+annual_mean_prices <- aggregate(property_sales$price, list(Year = property_sales$transaction_year), function(p) mean(p, trim = 0.10))
+names(annual_mean_prices) <- c("Year", "AnnualMean")
+
+# Combine the annual mean and median data
+yearly_summary <- merge(annual_mean_prices, annual_median_prices, by= "Year", all = TRUE)
+
+```
+We obtained a data set with a total of `r nrow(property_sales)` sales transactions for the years from `r round(start_year, 2)` to `r round(end_year, 2)`. The median sales price for the entire time frame was `r median_price`, while the 10% trimmed mean was `r round(avg_trimmed, 2)` (sd = `r price_sd_val`). Broken down by year, we have the following 10% trimmed mean and median sales prices per year:
+`r kable(yearly_summary)`
+
+As the graph below shows, the median sales price per year has been increasing 
+
+```{r echo=FALSE,eval=TRUE}
+barplot(yearly_summary$AnnualMedian,
+        names.arg = yearly_summary$Year,
+        xlab = "Year",
+        ylab = "Median Sales in the years",
+        col = "red",
+        main = "Median Sales Price per Year")
+
+
+```
+
+```{r,echo=FALSE}
+
+
+# Trend Line Forecasting
+linearTrendEstimate <- function(data, futureTime) {
+  time_sequence <- 1:length(data)
+  
+  linear_model_data <- data.frame(x = time_sequence, y = data)
+  regression_model <- lm(y ~ x, data = linear_model_data)
+  future_value <- regression_model$coefficients[[2]] * (futureTime) + regression_model$coefficients[[1]]
+  return(future_value)
+}
+
+# Weighted Moving Average Forecasting
+wmaEstimate <- function(data, periods, weights) {
+  recent_data <- tail(data, periods)
+  weighted_avg <- sum(recent_data * weights) / sum(weights)
+  return(weighted_avg)
+}
+
+# Applying forecasting functions
+forecast2020_wma <- wmaEstimate(data = property_sales$price, periods = 3, weights = c(4, 3, 1))
+forecast2020_linear <- linearTrendEstimate(data = property_sales$price, futureTime = 2020)
+
+# Combining the forecasts
+combinedForecast <- (forecast2020_wma + forecast2020_linear) / 2
+
+```
+Using both a weighted moving average forecasting model that averages the prior 3 years (with weights of 4, 3, and 1) and a linear regression trend line model, we predict next year's average sales price to be around $`r format(round(combinedForecast, 2), big.mark = ",")`.
+
+
+
